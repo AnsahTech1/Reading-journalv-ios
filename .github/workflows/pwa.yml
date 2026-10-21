@@ -1,0 +1,40 @@
+name: Publish web app (PWA)
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+    paths: ['app-ios.zip', '.github/workflows/pwa.yml']
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unpack app-ios.zip
+        run: |
+          test -f app-ios.zip || { echo "app-ios.zip is missing from the repository main page"; exit 1; }
+          rm -rf ios-app && mkdir ios-app && unzip -oq app-ios.zip -d ios-app
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Add PDF viewer and stamp the build number
+        working-directory: ios-app
+        run: |
+          npm install
+          cp node_modules/pdfjs-dist/build/pdf.min.js node_modules/pdfjs-dist/build/pdf.worker.min.js www/
+          sed -i "s/__BUILD__/${GITHUB_RUN_NUMBER}/" www/sw.js
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ios-app/www
+      - id: deployment
+        uses: actions/deploy-pages@v4
