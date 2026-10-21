@@ -1,0 +1,64 @@
+name: Build iOS app
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+    paths: ['app-ios.zip', '.github/workflows/ios.yml']
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unpack app-ios.zip
+        run: |
+          test -f app-ios.zip || { echo "app-ios.zip is missing from the repository main page"; exit 1; }
+          rm -rf ios-app && mkdir ios-app && unzip -oq app-ios.zip -d ios-app
+          ls ios-app
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install packages and PDF viewer
+        working-directory: ios-app
+        run: |
+          npm install
+          cp node_modules/pdfjs-dist/build/pdf.min.js node_modules/pdfjs-dist/build/pdf.worker.min.js www/
+      - name: Create the iOS project
+        working-directory: ios-app
+        run: npx cap add ios
+      - name: App icon
+        working-directory: ios-app
+        run: |
+          ICONSET=ios/App/App/Assets.xcassets/AppIcon.appiconset
+          for f in "$ICONSET"/*.png; do cp icon-1024.png "$f"; done
+          ls "$ICONSET"
+      - name: Info.plist settings (Files app access, export compliance)
+        working-directory: ios-app
+        run: |
+          P=ios/App/App/Info.plist
+          PB=/usr/libexec/PlistBuddy
+          $PB -c "Add :UIFileSharingEnabled bool true" $P || $PB -c "Set :UIFileSharingEnabled true" $P
+          $PB -c "Add :LSSupportsOpeningDocumentsInPlace bool true" $P || $PB -c "Set :LSSupportsOpeningDocumentsInPlace true" $P
+          $PB -c "Add :ITSAppUsesNonExemptEncryption bool false" $P || $PB -c "Set :ITSAppUsesNonExemptEncryption false" $P
+          $PB -c "Print" $P | head -40
+      - name: Sync web files into the project
+        working-directory: ios-app
+        run: npx cap sync ios
+      - name: Build (unsigned)
+        working-directory: ios-app/ios/App
+        run: |
+          xcodebuild -version
+          xcodebuild -workspace App.xcworkspace -scheme App -configuration Release \
+            -sdk iphoneos -derivedDataPath "$GITHUB_WORKSPACE/build" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build | tail -n 40
+      - name: Package unsigned IPA
+        run: |
+          APP="build/Build/Products/Release-iphoneos/App.app"
+          test -d "$APP" || { echo "App.app was not produced"; exit 1; }
+          rm -rf Payload && mkdir Payload && cp -R "$APP" Payload/
+          zip -qr ReadingJournal-unsigned.ipa Payload
+          ls -la ReadingJournal-unsigned.ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reading-journal-ios-unsigned
+          path: ReadingJournal-unsigned.ipa
